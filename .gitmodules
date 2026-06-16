@@ -1,0 +1,6 @@
+[submodule "src/submodule/grizli"]
+	path = src/submodule/grizli
+	url = https://github.com/gbrammer/grizli.git
+[submodule "src/submodule/msaexp"]
+	path = src/submodule/msaexp
+	url = https://github.com/gbrammer/msaexp.git
