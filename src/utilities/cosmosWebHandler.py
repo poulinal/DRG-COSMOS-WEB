@@ -9,11 +9,15 @@ from astropy.table import Table
 
 from astropy import units as u
 from utilities.catalogHandler import CatalogHandler
+from utilities.bandEnum import BandEnum
+from utilities.catalogAvailableEnum import CatalogAvailableEnum
+from utilities.cosmosWebApertureEnum import CosmosWebApertureEnum
 
 class CosmosWebHandler(CatalogHandler):
     
     def __init__(self, path, catalog_type='master'):
         
+        self.catalog_path = path
         self.hdu : fits.HDUList = None
         self.hdr : fits.Header = None
         self.cat_photom : dict[str,Table] = {}
@@ -28,6 +32,14 @@ class CosmosWebHandler(CatalogHandler):
         self.catalog_type = catalog_type
         
         super().__init__(path)
+        
+        self.type = CatalogAvailableEnum.COSMOS_WEB
+        
+    # HDU layout of the v1.1 master catalog on disk.
+    _MASTER_HDU_INDEX = {
+        'photometry': 1, 'lephare': 2, 'se_aper': 3, 'cigale': 4,
+        'ml_morpho': 5, 'bd': 6, 'galfitm_morpho': 7,
+    }
         
     @staticmethod
     def _find_hdu(hdul, *substrings):
@@ -102,7 +114,8 @@ class CosmosWebHandler(CatalogHandler):
         self.condition_clean['condition_clean'] = np.logical_and.reduce((
             self.cat_lephare['original']['type']==0, # Select only galaxies
             self.cat_photom['original']['warn_flag']==0, # No warning flag
-            np.abs(self.cat_photom['original']['mag_model_f444w'])<30, # Remove very faint objects
+            # np.abs(self.cat_photom['original']['mag_model_f444w'])<30, # Remove very faint objects
+            np.abs(self.cat_photom['original']['mag_aper_f444w'][:, 2])<30, # Remove very faint objects
             # self.cat_photom['original']['flag_star_hsc']==0, # Remove objects in HSC star mask area # For this project, we will keep since we don't care about the photometry
         ))
         mask = self.condition_clean['condition_clean']
@@ -114,10 +127,10 @@ class CosmosWebHandler(CatalogHandler):
         self.cat_cigale['condition_clean'] = self.cat_cigale['original'][mask] if self.cat_cigale['original'] is not None else None
         self.cat_bd['condition_clean'] = self.cat_bd['original'][mask] if self.cat_bd['original'] is not None else None
 
-    def miri_cut(self):
+    def miri_cut(self, aperature = CosmosWebApertureEnum.APER_0p5.value):
         if 'condition_clean' not in self.condition_clean:
             return  # purity_cut was skipped (required columns absent)
-        condition_clean_miri = np.logical_and(self.condition_clean['condition_clean'], self.cat_photom['original']['flux_model_f770w']>0)
+        condition_clean_miri = np.logical_and(self.condition_clean['condition_clean'], self.cat_photom['original']['flux_aper_f770w'][:, aperature]>0)
         self.condition_clean['condition_clean_miri'] = condition_clean_miri
 
         print(f"MIRI cut: {np.sum(condition_clean_miri)} out of {len(self.cat_lephare['condition_clean'])} objects remain. Fraction: {np.sum(condition_clean_miri)/len(self.cat_lephare['condition_clean']):.2%}")
@@ -126,6 +139,18 @@ class CosmosWebHandler(CatalogHandler):
         self.cat_photom['condition_clean_miri'] = self.cat_photom['original'][condition_clean_miri]
         self.cat_cigale['condition_clean_miri'] = self.cat_cigale['original'][condition_clean_miri] if self.cat_cigale['original'] is not None else None
         self.cat_bd['condition_clean_miri'] = self.cat_bd['original'][condition_clean_miri] if self.cat_bd['original'] is not None else None
+
+    def make_selection_cut(self, aperature = CosmosWebApertureEnum.APER_0p5.value):
+        condition_detection_aper = self.get_filter_cut(
+            filtername='condition_detection_aper',
+            filter_func=lambda photom, lephare, cigale, bd: (
+                (np.asarray(photom['flux_aper_f277w'])[:, aperature] / np.asarray(photom['flux_err_aper_f277w'])[:, aperature] < 3)
+                & (np.asarray(photom['flux_aper_f115w'])[:, aperature] / np.asarray(photom['flux_err_aper_f115w'])[:, aperature] < 3)
+                & (np.asarray(photom['flux_aper_f150w'])[:, aperature] / np.asarray(photom['flux_err_aper_f150w'])[:, aperature] < 3)
+                & (np.asarray(photom['flux_aper_f444w'])[:, aperature] / np.asarray(photom['flux_err_aper_f444w'])[:, aperature] >= 5)
+                & (np.asarray(photom['flux_aper_f770w'])[:, aperature] / np.asarray(photom['flux_err_aper_f770w'])[:, aperature] >= 5)
+            )
+        )
 
     def get_filter_cut(self, filter_func : Callable | np.ndarray, filtername : str = "default_filter", filter_to_take_from : str = "condition_clean_miri"):
         """
@@ -182,63 +207,95 @@ class CosmosWebHandler(CatalogHandler):
     def get_cat_bd(self, filtername : str = "original"):
         return self.cat_bd[filtername]
     
-    def save_catalog(self, path, columns_to_keep = None, columns_to_remove = None, tables_to_remove = None, filtername = 'original'):
-        if self.cat_photom is None or self.cat_lephare is None:
-            raise ValueError("Data not loaded. Call load_data() first.")
-
-        if filtername not in self.cat_lephare:
-            raise ValueError(f"Filter name '{filtername}' not found in catalog. Available filters: {list(self.cat_lephare.keys())}")
-        if columns_to_keep is not None and columns_to_remove is not None:
-            raise ValueError("Cannot specify both columns_to_keep and columns_to_remove. Please specify only one of them.")
-
-        # tables_to_remove drops whole HDU extensions (e.g. 'cigale', 'bd'). These are
-        # separate tables in the master catalog, not columns inside one table.
-        tables_to_remove = set(tables_to_remove) if tables_to_remove is not None else set()
-        unknown = tables_to_remove - {'lephare', 'photometry', 'cigale', 'bd'}
-        if unknown:
-            raise ValueError(f"Unknown table(s) {unknown}. Valid tables: 'lephare', 'photometry', 'cigale', 'bd'.")
+    def get_cat_size(self, filtername : str = "original"):
+        # returns in degrees so we can convert to arcseconds by multiplying by 3600
+        if self.get_photometry_catalog(filtername) is not None and 'radius_sersic' in self.get_photometry_catalog(filtername).colnames:
+            return self.get_photometry_catalog(filtername)['radius_sersic'] * 3600, self.get_photometry_catalog(filtername)['radius_sersic_err'] * 3600
+        else:
+            raise ValueError(f"Size column 'radius_sersic' not found in photometry catalog for filter '{filtername}'.")
         
-        print(f"Saving catalog with filter '{filtername}' to {path}...")
+    def get_radius_col_name(self, filtername = "original"):
+        return 'radius_sersic', 'radius_sersic_err'
+        
+    def get_photometry_catalog(self, filtername : str = "original"):
+        return self.cat_photom[filtername]
+    
+    def get_photoz_catalog(self, filtername : str = "original"):
+        return self.cat_lephare[filtername]
+    
+    def get_z_redshift(self, filtername : str = "original"):
+        if self.cat_lephare[filtername] is not None and 'zfinal' in self.cat_lephare[filtername].colnames:
+            return self.get_photoz_catalog(filtername)['zfinal']
+        else:
+            raise ValueError(f"Redshift column 'zfinal' not found in lephare catalog for filter '{filtername}'.")
+    
+    def get_filter_catalog_name_convention(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
+        return f"flux_aper_{str(band).lower()}", f"flux_err_aper_{str(band).lower()}"
+    
+    def get_magnitude_catalog_name_convention(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
+        return f"mag_aper_{str(band).lower()}", f"mag_err_aper_{str(band).lower()}"
+    
+    
+    def get_filter_magnitude(self, filtername: str = "original", band: BandEnum = BandEnum.F444W, aperture: int = 2):
+        # return self._getcol(self.get_photometry_catalog(filtername), self.get_magnitude_catalog_name_convention(band, aperture))[:, aperture], None  # Catalog does not provide magnitude error for circular apertures, so we return None for the error.
+        mag_col_name, mag_err_col_name = self.get_magnitude_catalog_name_convention(band, aperture)
+        photom_catalog = self.get_photometry_catalog(filtername)
+        return self._getcol(photom_catalog, mag_col_name)[:, aperture], None  # Catalog does not provide magnitude error for circular apertures, so we return None for the error.
+    
+    def get_filter_flux(self, filtername : str = "original", band : BandEnum = BandEnum.F444W, aperture : int = 2):
+        filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention(band, aperture)
+        photom_catalog = self.get_photometry_catalog(filtername)
+        return self._getcol(photom_catalog, filter_col_name)[:, aperture], self._getcol(photom_catalog, filter_err_col_name)[:, aperture]
+        
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    def save_reduced_catalog(self, path, reduced='light'):
+        """
+        Save a reduced version of the catalog containing only the most essential columns for quick loading and analysis. The 'light' version includes only columns lephlare and photometry tables, while the 'lighter' version includes only a subset of columns
 
-        lephare_table_to_save = self.cat_lephare[filtername]
-        photom_table_to_save = self.cat_photom[filtername]
-        cigale_table_to_save = self.cat_cigale[filtername] if self.cat_cigale[filtername] is not None and 'cigale' not in tables_to_remove else None
-        bd_table_to_save = self.cat_bd[filtername] if self.cat_bd[filtername] is not None and 'bd' not in tables_to_remove else None
+        Args:
+            path (str): The file path to save the reduced catalog to.
+            reduced (str, optional): The level of reduction to apply. Options are 'light' or 'lighter' or 'lightest'. Defaults to 'light'.
+            """
+            
+            
+        if reduced == 'light':
+            #resave the cosmos web master catalog but leave cigale, bd, ml-morpho, se++aper, and galfitm-morpo empty to save space and load time, since we won't be using those columns in our analysis
 
-        print(f"Original number of columns: lephare={len(lephare_table_to_save.colnames)}, photometry={len(photom_table_to_save.colnames)}, cigale={len(cigale_table_to_save.colnames) if cigale_table_to_save is not None else 'N/A'}, bd={len(bd_table_to_save.colnames) if bd_table_to_save is not None else 'N/A'}")
-        if columns_to_keep is not None:
-            lephare_table_to_save = lephare_table_to_save[columns_to_keep]
-            photom_table_to_save = photom_table_to_save[columns_to_keep]
-            if cigale_table_to_save is not None:
-                cigale_table_to_save = cigale_table_to_save[columns_to_keep]
-            if bd_table_to_save is not None:
-                bd_table_to_save = bd_table_to_save[columns_to_keep]
-        elif columns_to_remove is not None:
-            lephare_table_to_save = lephare_table_to_save[[col for col in lephare_table_to_save.colnames if col not in columns_to_remove]]
-            photom_table_to_save = photom_table_to_save[[col for col in photom_table_to_save.colnames if col not in columns_to_remove]]
-            if cigale_table_to_save is not None:
-                cigale_table_to_save = cigale_table_to_save[[col for col in cigale_table_to_save.colnames if col not in columns_to_remove]]
-            if bd_table_to_save is not None:
-                bd_table_to_save = bd_table_to_save[[col for col in bd_table_to_save.colnames if col not in columns_to_remove]]
-        print(f"Number of columns after applying columns_to_keep/columns_to_remove: lephare={len(lephare_table_to_save.colnames)}, photometry={len(photom_table_to_save.colnames)}, cigale={len(cigale_table_to_save.colnames) if cigale_table_to_save is not None else 'N/A'}, bd={len(bd_table_to_save.colnames) if bd_table_to_save is not None else 'N/A'}")
+            self.save_catalog_streamed(path,
+                                    tables_to_keep=('lephare', 'photometry'))
+        elif reduced == 'lighter':
+            # now resave but  within photometry hotcold and se++, remove all columns except id, ra, dec, radius_sersic, radius_sersic_err, sersic, sersic_err, type, warn_flag, mag_model_f*, mag_err_model_f*, mag_aper_f*, mag_err_aper_f*, flux_model_f*, flux_err_model_f*, flux_aper_f*, and flux_err_aper_f* 
+            columns_to_keep = ['id', 'ra', 'dec', 'radius_sersic', 'radius_sersic_err', 'sersic', 'sersic_err', 'type', 'warn_flag', 'zfinal',
+                            'mag_model_f115w', 'mag_err_model_f115w', 'mag_aper_f115w', 'mag_err_aper_f115w', 'flux_model_f115w', 'flux_err_model_f115w', 'flux_aper_f115w', 'flux_err_aper_f115w',
+                            'mag_model_f150w', 'mag_err_model_f150w', 'mag_aper_f150w', 'mag_err_aper_f150w', 'flux_model_f150w', 'flux_err_model_f150w', 'flux_aper_f150w', 'flux_err_aper_f150w',
+                            'mag_model_f277w', 'mag_err_model_f277w', 'mag_aper_f277w', 'mag_err_aper_f277w', 'flux_model_f277w', 'flux_err_model_f277w', 'flux_aper_f277w', 'flux_err_aper_f277w',
+                            'mag_model_f444w', 'mag_err_model_f444w', 'mag_aper_f444w', 'mag_err_aper_f444w', 'flux_model_f444w', 'flux_err_model_f444w', 'flux_aper_f444w', 'flux_err_aper_f444w', 'mag_model_f770w', 'mag_err_model_f770w', 'mag_aper_f770w', 'mag_err_aper_f770w', 'flux_model_f770w', 'flux_err_model_f770w', 'flux_aper_f770w', 'flux_err_aper_f770w']
+            self.save_catalog_streamed(path,
+                                    tables_to_keep=('photometry','lephare'),
+                                    columns_to_keep=columns_to_keep)
+
+        elif reduced == 'lightest':
+            # now resave with just the condition_clean_miri catalog
+            with fits.open(self.catalog_path, memmap=True) as s:
+                miri_mask = ((s[2].data['type'] == 0) &           # lephare HDU
+                            (s[1].data['warn_flag'] == 0) &       # photometry HDU
+                            (np.abs(s[1].data['mag_model_f444w']) < 30) &
+                            (s[1].data['flux_model_f770w'] > 0))
                 
-        hdul = fits.HDUList([fits.PrimaryHDU()])
-        if 'lephare' not in tables_to_remove:
-            hdul.append(fits.BinTableHDU(lephare_table_to_save, name='lephare'))
-        if 'photometry' not in tables_to_remove:
-            hdul.append(fits.BinTableHDU(photom_table_to_save, name='photometry'))
-        if cigale_table_to_save is not None:
-            hdul.append(fits.BinTableHDU(cigale_table_to_save, name='cigale'))
-        if bd_table_to_save is not None:
-            hdul.append(fits.BinTableHDU(bd_table_to_save, name='bd'))
-        hdul.writeto(path, overwrite=True)
-        print(f"Catalog saved successfully to {path}.")
-
-    # HDU layout of the v1.1 master catalog on disk.
-    _MASTER_HDU_INDEX = {
-        'photometry': 1, 'lephare': 2, 'se_aper': 3, 'cigale': 4,
-        'ml_morpho': 5, 'bd': 6, 'galfitm_morpho': 7,
-    }
+            self.save_catalog_streamed(path,
+                                    tables_to_keep=('photometry','lephare'),
+                                    columns_to_keep=columns_to_keep,
+                                    mask=miri_mask)
+        else:
+            raise ValueError(f"Invalid reduction level '{reduced}'. Valid options are 'light', 'lighter', or 'lightest'.")
 
     def save_catalog_streamed(self, path, tables_to_keep=('lephare', 'photometry'),
                               columns_to_keep=None, mask=None, overwrite=True):
@@ -290,3 +347,7 @@ class CosmosWebHandler(CatalogHandler):
 
             out.writeto(path, overwrite=overwrite)
         print(f"Catalog streamed to {path} (kept: {list(tables_to_keep)}).")
+        
+        
+        
+        
