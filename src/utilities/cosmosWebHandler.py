@@ -247,7 +247,14 @@ class CosmosWebHandler(CatalogHandler):
         photom_catalog = self.get_photometry_catalog(filtername)
         return self._getcol(photom_catalog, filter_col_name)[:, aperture], self._getcol(photom_catalog, filter_err_col_name)[:, aperture]
         
+    def get_id_col_name(self):
+        return 'id'
     
+    def get_ra_col_name(self):
+        return 'ra'
+    
+    def get_dec_col_name(self):
+        return 'dec'
     
     
     

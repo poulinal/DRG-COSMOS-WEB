@@ -156,9 +156,21 @@ class CatalogHandler():
             return self.get_size_catalog(filtername)[radius_col], None
         else:
             return self.get_size_catalog(filtername)[radius_col], self.get_size_catalog(filtername)[radius_err_col]
-        
+    
+    @abstractmethod
+    def get_id_col_name(self):
+        pass
+    
     def get_ids(self, filtername : str = "original"):
-        return self.get_photometry_catalog(filtername)['id']
+        return self.get_photometry_catalog(filtername)[self.get_id_col_name()]
+    
+    @abstractmethod
+    def get_ra_col_name(self):
+        pass
+    
+    @abstractmethod
+    def get_dec_col_name(self):
+        pass
 
     
     

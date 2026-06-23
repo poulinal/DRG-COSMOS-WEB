@@ -19,6 +19,7 @@ class JadesHandler(CatalogHandler):
         self.cat_flag : dict[str, Table] = {'original': None}
         self.cat_size : dict[str, Table] = {'original': None}
         self.cat_circ_bsub_conv : dict[str, Table] = {'original': None}
+        self.cat_circ_non : dict[str, Table] = {'original': None}
         self.cat_circ : dict[str, Table] = {'original': None}
         self.cat_circ_bsub : dict[str, Table] = {'original': None}
         self.cat_circ_conv : dict[str, Table] = {'original': None}
@@ -49,7 +50,7 @@ class JadesHandler(CatalogHandler):
                 return h
         return None
 
-    def load_catalog(self, apply_cuts=True):
+    def load_catalog(self, apply_cuts=True, circ_to_use = 'circ_bsub_conv'):
         # try:
         import os
         if not os.path.exists(self.catalog_path):
@@ -65,18 +66,33 @@ class JadesHandler(CatalogHandler):
             self.hdr = hdu[1].header
             self.cat_flag['original'] = _load(hdu, 'FLAG')
             self.cat_size['original'] = _load(hdu, 'SIZE')
-            self.cat_circ['original'] = _load(hdu, 'CIRC')
+            self.cat_circ_non['original'] = _load(hdu, 'CIRC')
             self.cat_circ_bsub['original'] = _load(hdu, 'CIRC_BSUB')
             self.cat_circ_conv['original'] = _load(hdu, 'CIRC_CONV')
             self.cat_circ_bsub_conv['original'] = _load(hdu, 'CIRC_BSUB_CONV')
             self.cat_miri['original'] = _load(hdu, 'MIRI')
             self.cat_photoz['original'] = _load(hdu, 'PHOTOZ')
+            
+            self.set_circ_to_use(circ_to_use)
         print("Catalog loaded successfully.")
         
         if apply_cuts:
             self.purity_cut()
             self.clean_miri_cut()
             # self.make_selection_cut()
+            
+    def set_circ_to_use(self, circ_to_use):
+        if circ_to_use == 'circ_bsub_conv':
+            self.cat_circ['original'] = self.cat_circ_bsub_conv['original']
+        elif circ_to_use == 'circ':
+            self.cat_circ['original'] = self.cat_circ_non['original']
+        elif circ_to_use == 'circ_bsub':
+            self.cat_circ['original'] = self.cat_circ_bsub['original']
+        elif circ_to_use == 'circ_conv':
+            self.cat_circ['original'] = self.cat_circ_conv['original']
+        else:
+            raise ValueError(f"Invalid circ_to_use value: {circ_to_use}. Must be one of 'circ_bsub_conv', 'circ', 'circ_bsub', or 'circ_conv'.")
+        print(f"Circular photometry catalog set to use '{circ_to_use}'.")
         
     
     def purity_cut(self):
@@ -89,25 +105,26 @@ class JadesHandler(CatalogHandler):
         # self.cat_miri['condition_purity'] = self.cat_miri['original']
         # self.cat_photoz['condition_purity'] = self.cat_photoz['original']
         
-        self.get_filter_cut(filter_func=lambda flag, size, circ_bsub_conv, miri, photoz: flag['ID'] != 0, filtername='condition_purity', filter_to_take_from='original')
+        self.get_filter_cut(filter_func=lambda flag, size, circ, miri, photoz: flag['ID'] != 0, filtername='condition_purity', filter_to_take_from='original')
         
         
     def clean_miri_cut(self, aperature = JadesApertureEnum.APER_0p5.value):
         # aperature = JadesApertureEnum.APER_0p1.value
         #selects where MIRI F770W_CIRC5 > 0
-        self.get_filter_cut(filter_func=lambda flag, size, circ_bsub_conv, miri, photoz: np.logical_and(miri[f'F770W_CIRC{aperature}_BSUB'] > 0, miri[f'F770W_CIRC{aperature}_bkg_BSUB'] != 0), filtername='condition_clean_miri', filter_to_take_from='condition_purity')
+        self.get_filter_cut(filter_func=lambda flag, size, circ, miri, photoz: np.logical_and(miri[f'F770W_CIRC{aperature}_BSUB'] > 0, miri[f'F770W_CIRC{aperature}_bkg_BSUB'] != 0), filtername='condition_clean_miri', filter_to_take_from='condition_purity')
         
     
-    def make_selection_cut(self, aperature = JadesApertureEnum.APER_0p5.value):
+    def make_selection_cut(self, aperature = JadesApertureEnum.APER_0p5.value, use_image_error = True):
         # aperature = JadesApertureEnum.APER_0p1.value # use the smallest aperture for the selection cut since it is the most sensitive to point sources and we want to be inclusive in our selection cut to not miss any potential high-redshift candidates, and then we can apply more stringent cuts later on the clean sample with MIRI and z > 4.
+        error_suffix = '_ei' if use_image_error else '_e'
         condition_detection_aper = self.get_filter_cut(
             filtername='condition_detection_aper',
-            filter_func=lambda flag, size, circ_bsub_conv, miri, photoz: (
-                (np.asarray(circ_bsub_conv[f'F115W_CIRC{aperature}']) / np.asarray(circ_bsub_conv[f'F115W_CIRC{aperature}_ei']) < 3)
-                & (np.asarray(circ_bsub_conv[f'F150W_CIRC{aperature}']) / np.asarray(circ_bsub_conv[f'F150W_CIRC{aperature}_ei']) < 3)
-                & (np.asarray(circ_bsub_conv[f'F277W_CIRC{aperature}']) / np.asarray(circ_bsub_conv[f'F277W_CIRC{aperature}_ei']) < 3)
-                & (np.asarray(circ_bsub_conv[f'F444W_CIRC{aperature}']) / np.asarray(circ_bsub_conv[f'F444W_CIRC{aperature}_ei']) >= 5)
-                & (np.asarray(miri[f'F770W_CIRC{aperature}_BSUB']) / np.asarray(miri[f'F770W_CIRC{aperature}_ei_BSUB']) >= 5)
+            filter_func=lambda flag, size, circ, miri, photoz: (
+                (np.asarray(circ[f'F115W_CIRC{aperature}']) / np.asarray(circ[f'F115W_CIRC{aperature}{error_suffix}']) < 3)
+                & (np.asarray(circ[f'F150W_CIRC{aperature}']) / np.asarray(circ[f'F150W_CIRC{aperature}{error_suffix}']) < 3)
+                & (np.asarray(circ[f'F277W_CIRC{aperature}']) / np.asarray(circ[f'F277W_CIRC{aperature}{error_suffix}']) < 3)
+                & (np.asarray(circ[f'F444W_CIRC{aperature}']) / np.asarray(circ[f'F444W_CIRC{aperature}{error_suffix}']) >= 5)
+                & (np.asarray(miri[f'F770W_CIRC{aperature}_BSUB']) / np.asarray(miri[f'F770W_CIRC{aperature}{error_suffix}_BSUB']) >= 5)
             ),
             filter_to_take_from='condition_clean_miri'
         )
@@ -125,7 +142,7 @@ class JadesHandler(CatalogHandler):
         The method updates the stored tables in-place (like `purity_cut`) and
         returns the boolean mask that was applied.
         """
-        if self.cat_flag is None or self.cat_size is None or self.cat_circ_bsub_conv is None or self.cat_miri is None or self.cat_photoz is None:
+        if self.cat_flag is None or self.cat_size is None or self.cat_circ is None or self.cat_miri is None or self.cat_photoz is None:
             raise ValueError("Data not loaded. Call load_data() first.")
         
         if filter_to_take_from not in self.cat_flag:
@@ -138,7 +155,7 @@ class JadesHandler(CatalogHandler):
             if mask.shape[0] != len(self.cat_flag[filter_to_take_from]):
                 raise ValueError(f"Filter function array length {mask.shape[0]} does not match number of entries in catalog {len(self.cat_flag[filter_to_take_from])}.")
         elif callable(filter_func):
-            mask = filter_func(self.cat_flag[filter_to_take_from], self.cat_size[filter_to_take_from], self.cat_circ_bsub_conv[filter_to_take_from], self.cat_miri[filter_to_take_from], self.cat_photoz[filter_to_take_from])
+            mask = filter_func(self.cat_flag[filter_to_take_from], self.cat_size[filter_to_take_from], self.cat_circ[filter_to_take_from], self.cat_miri[filter_to_take_from], self.cat_photoz[filter_to_take_from])
             if mask.shape[0] != len(self.cat_flag[filter_to_take_from]):
                 raise ValueError(f"Filter function output length {mask.shape[0]} does not match number of entries in catalog {len(self.cat_flag[filter_to_take_from])}.")
         else:
@@ -146,12 +163,12 @@ class JadesHandler(CatalogHandler):
         
         self.cat_flag[filtername] = self.cat_flag[filter_to_take_from][mask]
         self.cat_size[filtername] = self.cat_size[filter_to_take_from][mask]
-        self.cat_circ_bsub_conv[filtername] = self.cat_circ_bsub_conv[filter_to_take_from][mask]
+        # self.cat_circ_bsub_conv[filtername] = self.cat_circ_bsub_conv[filter_to_take_from][mask]
         self.cat_miri[filtername] = self.cat_miri[filter_to_take_from][mask]
         self.cat_photoz[filtername] = self.cat_photoz[filter_to_take_from][mask]
         self.cat_circ[filtername] = self.cat_circ[filter_to_take_from][mask] if self.cat_circ[filter_to_take_from] is not None else None
-        self.cat_circ_bsub[filtername] = self.cat_circ_bsub[filter_to_take_from][mask] if self.cat_circ_bsub[filter_to_take_from] is not None else None
-        self.cat_circ_conv[filtername] = self.cat_circ_conv[filter_to_take_from][mask] if self.cat_circ_conv[filter_to_take_from] is not None else None
+        # self.cat_circ_bsub[filtername] = self.cat_circ_bsub[filter_to_take_from][mask] if self.cat_circ_bsub[filter_to_take_from] is not None else None
+        # self.cat_circ_conv[filtername] = self.cat_circ_conv[filter_to_take_from][mask] if self.cat_circ_conv[filter_to_take_from] is not None else None
         
         print(f"Applied filter '{filtername}' to catalog. {mask.sum()} entries remain out of {len(self.cat_flag[filter_to_take_from])}, fraction: {mask.sum() / len(self.cat_flag[filter_to_take_from]):.2f}.")
         
@@ -174,6 +191,11 @@ class JadesHandler(CatalogHandler):
             raise ValueError(f"Filter name '{filtername}' not found in catalog. Available options: {list(self.cat_circ_bsub_conv.keys())}")
         return self.cat_circ_bsub_conv[filtername]
     
+    def get_cat_circ(self, filtername = "original"):
+        if filtername not in self.cat_circ:
+            raise ValueError(f"Filter name '{filtername}' not found in catalog. Available options: {list(self.cat_circ.keys())}")
+        return self.cat_circ[filtername]
+    
     def get_cat_miri(self, filtername = "original"):
         if filtername not in self.cat_miri:
             raise ValueError(f"Filter name '{filtername}' not found in catalog. Available options: {list(self.cat_miri.keys())}")
@@ -185,7 +207,7 @@ class JadesHandler(CatalogHandler):
         return self.cat_photoz[filtername]
     
     def get_photometry_catalog(self, filtername = "original"):
-        return self.get_cat_circ_bsub_conv(filtername)
+        return self.get_cat_circ(filtername)
     
     def get_size_catalog(self, filtername = "original"):
         return self.get_cat_size(filtername)
@@ -243,7 +265,14 @@ class JadesHandler(CatalogHandler):
     def get_z_redshift(self, filtername = "original"):
         return self.get_photoz_catalog(filtername)['z_ml'] #try z_ml for now (maximum-likelihood redshift), but we can also try z_a (median redshift) and z_spec (spectroscopic redshift)
 
-
+    def get_id_col_name(self):
+        return 'ID'
+    
+    def get_ra_col_name(self):
+        return 'RA'
+    
+    def get_dec_col_name(self):
+        return 'DEC'
 
     
     
@@ -272,13 +301,12 @@ class JadesHandler(CatalogHandler):
             #resave the cosmos web master catalog but leave cigale, bd, ml-morpho, se++aper, and galfitm-morpo empty to save space and load time, since we won't be using those columns in our analysis
 
             self.save_catalog_streamed(path,
-                                    tables_to_keep=('FLAG', 'SIZE', 'CIRC_BSUB_CONV', 'MIRI', 'PHOTOZ'),)
+                                    tables_to_keep=('FLAG', 'SIZE', 'CIRC', 'CIRC_BSUB_CONV', 'MIRI', 'PHOTOZ'),)
             
         elif reduced == 'lighter':
             # now resave but  within photometry hotcold and se++, remove all columns except id, ra, dec, radius_sersic, radius_sersic_err, sersic, sersic_err, type, warn_flag, mag_model_f*, mag_err_model_f*, mag_aper_f*, mag_err_aper_f*, flux_model_f*, flux_err_model_f*, flux_aper_f*, and flux_err_aper_f* 
             columns_to_keep = ['ID', 'RA', 'DEC', 'FLAG_BN', 'A', 'B', 'FWHM', 
                                'F115W_CIRC0', 'F115W_CIRC0_bkg', 'F115W_CIRC0_ei', 'F150W_CIRC0', 'F150W_CIRC0_bkg', 'F150W_CIRC0_ei', 'F277W_CIRC0', 'F277W_CIRC0_bkg', 'F277W_CIRC0_ei', 'F444W_CIRC0', 'F444W_CIRC0_bkg', 'F444W_CIRC0_ei', 'F770W_CIRC0', 'F770W_CIRC0_BSUB', 'F770W_CIRC0_bkg_BSUB', 'F770W_CIRC0_ei', 'F770W_CIRC0_ei_BSUB',
-                               
                                'F115W_CIRC1', 'F115W_CIRC1_bkg', 'F115W_CIRC1_ei', 'F150W_CIRC1', 'F150W_CIRC1_bkg', 'F150W_CIRC1_ei', 'F277W_CIRC1', 'F277W_CIRC1_bkg', 'F277W_CIRC1_ei', 'F444W_CIRC1', 'F444W_CIRC1_bkg', 'F444W_CIRC1_ei', 'F770W_CIRC1', 'F770W_CIRC1_BSUB', 'F770W_CIRC1_bkg_BSUB', 'F770W_CIRC1_ei', 'F770W_CIRC1_ei_BSUB',
                                
                                'F115W_CIRC2', 'F115W_CIRC2_bkg', 'F115W_CIRC2_ei', 'F150W_CIRC2', 'F150W_CIRC2_bkg', 'F150W_CIRC2_ei', 'F277W_CIRC2', 'F277W_CIRC2_bkg', 'F277W_CIRC2_ei', 'F444W_CIRC2', 'F444W_CIRC2_bkg', 'F444W_CIRC2_ei', 'F770W_CIRC2', 'F770W_CIRC2_BSUB', 'F770W_CIRC2_bkg_BSUB', 'F770W_CIRC2_ei', 'F770W_CIRC2_ei_BSUB',
@@ -291,7 +319,7 @@ class JadesHandler(CatalogHandler):
                                
                                'F115W_CIRC6', 'F115W_CIRC6_bkg', 'F115W_CIRC6_ei', 'F150W_CIRC6', 'F150W_CIRC6_bkg', 'F150W_CIRC6_ei', 'F277W_CIRC6', 'F277W_CIRC6_bkg', 'F277W_CIRC6_ei', 'F444W_CIRC6', 'F444W_CIRC6_bkg', 'F444W_CIRC6_ei', 'F770W_CIRC6', 'F770W_CIRC6_BSUB', 'F770W_CIRC6_bkg_BSUB', 'F770W_CIRC6_ei', 'F770W_CIRC6_ei_BSUB', 'z_a', 'z_ml', 'z_spec',]
             self.save_catalog_streamed(path,
-                                    tables_to_keep=('FLAG', 'SIZE', 'CIRC_BSUB_CONV', 'MIRI', 'PHOTOZ'),
+                                    tables_to_keep=('FLAG', 'SIZE', 'CIRC', 'CIRC_BSUB', 'CIRC_CONV', 'CIRC_BSUB_CONV', 'MIRI', 'PHOTOZ'),
                                     columns_to_keep=columns_to_keep)
         else:
             raise ValueError(f"Invalid reduction level '{reduced}'. Valid options are 'light', 'lighter'.")
