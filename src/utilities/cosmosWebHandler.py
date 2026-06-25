@@ -127,7 +127,7 @@ class CosmosWebHandler(CatalogHandler):
         self.cat_cigale['condition_clean'] = self.cat_cigale['original'][mask] if self.cat_cigale['original'] is not None else None
         self.cat_bd['condition_clean'] = self.cat_bd['original'][mask] if self.cat_bd['original'] is not None else None
 
-    def miri_cut(self, aperature = CosmosWebApertureEnum.APER_0p5.value):
+    def clean_miri_cut(self, aperature = CosmosWebApertureEnum.APER_0p5.value):
         if 'condition_clean' not in self.condition_clean:
             return  # purity_cut was skipped (required columns absent)
         condition_clean_miri = np.logical_and(self.condition_clean['condition_clean'], self.cat_photom['original']['flux_aper_f770w'][:, aperature]>0)

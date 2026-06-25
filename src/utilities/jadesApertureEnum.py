@@ -20,7 +20,11 @@ class JadesApertureEnum(enum.Enum):
     APER_0p5 = 6
     
     def __str__(self):
-        return self.name
+        #return the arc second value of the aperture as a string, with the decimal point replaced by 'p' and no leading zeros
+        if self.name == 'APER0':
+            return '0'
+        else:
+            return self.name.replace('APER_', '').replace('p', '.')
     
     def __repr__(self):
         return self.name

@@ -12,3 +12,5 @@ DAWN-IRES Project - Mentors Dr. Marko Shuntov and Dr. Shuowen Jin - Search and c
 - ipywidgets
 - pymupdf
 - requests
+
+- astropy numpy scipy matplotlib configobj setuptools rich

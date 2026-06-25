@@ -111,7 +111,7 @@ class JadesHandler(CatalogHandler):
     def clean_miri_cut(self, aperature = JadesApertureEnum.APER_0p5.value):
         # aperature = JadesApertureEnum.APER_0p1.value
         #selects where MIRI F770W_CIRC5 > 0
-        self.get_filter_cut(filter_func=lambda flag, size, circ, miri, photoz: np.logical_and(miri[f'F770W_CIRC{aperature}_BSUB'] > 0, miri[f'F770W_CIRC{aperature}_bkg_BSUB'] != 0), filtername='condition_clean_miri', filter_to_take_from='condition_purity')
+        self.get_filter_cut(filter_func=lambda flag, size, circ, miri, photoz: np.logical_and(miri[f'F770W_CIRC{aperature}_BSUB'] > 0, miri[f'F770W_CIRC{aperature}_bkg_BSUB'] is not None and miri[f'F770W_CIRC{aperature}_bkg_BSUB'] != 0), filtername='condition_clean_miri', filter_to_take_from='condition_purity')
         
     
     def make_selection_cut(self, aperature = JadesApertureEnum.APER_0p5.value, use_image_error = True):
