@@ -10,7 +10,7 @@ from astropy.table import Table
 from astropy import units as u
 from utilities.catalogHandler import CatalogHandler
 
-class AlmaHandler(CatalogHandler):
+class AlmaA3Handler(CatalogHandler):
     def __init__(self, path):
         super().__init__(path)
         

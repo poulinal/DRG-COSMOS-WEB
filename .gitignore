@@ -1,3 +1,15 @@
+src/cigale-run/2026*
+src/cigale-run/out
+src/*.html
+src/*.csv
+SED_fit/*.csv
+*.DS_Store
+*.fits
+*.dat
+
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

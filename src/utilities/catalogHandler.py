@@ -11,11 +11,13 @@ from astropy.table import Table
 
 from astropy import units as u
 
+from utilities.fitFileHandler import FitFileHandler
 from utilities.bandEnum import BandEnum
 from utilities.catalogAvailableEnum import CatalogAvailableEnum
 
-class CatalogHandler():
+class CatalogHandler(FitFileHandler):
     def __init__(self, path):
+        super().__init__(path)
         self.catalog_path : str = path
         self.type : CatalogAvailableEnum = None
         
@@ -27,43 +29,23 @@ class CatalogHandler():
         self.cat_bd : dict[str,Table] = {}
         
         self.condition_clean : dict[np.ndarray] = {}
-        
-    
-    @abstractmethod
-    def load_catalog(self):
-        pass
 
     @abstractmethod
     def get_filter_cut(self, filter_func : Callable | np.ndarray, filtername : str = "default_filter", filter_to_take_from : str = "original"):
         pass
+
+    @abstractmethod
+    def load_catalog(self):
+        self.load_fit_file()
     
     @staticmethod
-    def _getcol(p, *names):
-        # Resolve the set of available column names explicitly. We must NOT fall
-        # back to `n in p` on a (possibly masked) astropy Table: that iterates the
-        # table and compares Rows, which raises a cryptic
-        # "Cannot compare structured or void to non-void arrays" TypeError instead
-        # of a clean column lookup.
-        colnames = None
-        if hasattr(p, 'colnames'):
-            colnames = list(p.colnames)
-        elif hasattr(p, 'dtype') and getattr(p.dtype, 'names', None):
-            colnames = list(p.dtype.names)
-
-        if colnames is not None:
-            for n in names:
-                if n in colnames:
-                    return np.asarray(p[n])
-            raise KeyError(f"none of {names} found; available columns: {colnames}")
-
-        # dict-like fallback (plain dict, mapping, etc.)
-        for n in names:
-            try:
-                if n in p:
-                    return np.asarray(p[n])
-            except TypeError:
-                continue
-        raise KeyError(f"none of {names} found")
+    def get_dict_filtername(catalog : dict[str, Table], filtername : str = "original"):
+        # print(f"catalog: {catalog}, catalog type: {type(catalog)}")
+        all_filternames_in_catalog = list(catalog.keys())
+        if filtername in all_filternames_in_catalog:
+            return catalog[filtername]
+        else:
+            raise KeyError(f"Filter name '{filtername}' not found in catalog. Available filter names: {all_filternames_in_catalog}")
     
     @abstractmethod
     def get_photometry_catalog(self, filtername : str = "original"):

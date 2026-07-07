@@ -1,6 +1,8 @@
 # AP 2026
 
 from typing import Callable
+import requests
+import fitz  # PyMuPDF
 
 import numpy as np
 from matplotlib import pylab as plt
@@ -25,6 +27,9 @@ class CosmosWebHandler(CatalogHandler):
         self.cat_cigale : dict[str,Table] = {}
         self.cat_bd : dict[str,Table] = {}
         
+        self._png_cache = {}   # sid -> list of PNG byte-strings (one per page)
+        self.pdf_url_sourceid = lambda sid: f"https://cosmos2025.iap.fr/fitsmap/data/inspec_plots/cosmos_web_sed_{sid}.pdf"
+        
         self.condition_clean : dict[np.ndarray] = {}
         
         if catalog_type != 'photometry' and catalog_type != 'lephare' and catalog_type != 'cigale' and catalog_type != 'bd' and catalog_type != 'master':
@@ -40,21 +45,16 @@ class CosmosWebHandler(CatalogHandler):
         'photometry': 1, 'lephare': 2, 'se_aper': 3, 'cigale': 4,
         'ml_morpho': 5, 'bd': 6, 'galfitm_morpho': 7,
     }
-        
-    @staticmethod
-    def _find_hdu(hdul, *substrings):
-        """Return the first table HDU whose EXTNAME matches any of the given
-        substrings (case-insensitive, '+' ignored), or None if absent.
-
-        Derived catalogs are looked up by name rather than position because the
-        master layout (photom@1, lephare@2, cigale@4, bd@6) does not hold for
-        the trimmed files (different order, fewer/no extensions)."""
-        wanted = [s.replace('+', '').lower() for s in substrings]
-        for h in hdul[1:]:
-            name = (h.name or '').replace('+', '').lower()
-            if any(w in name for w in wanted):
-                return h
-        return None
+    
+    def _render_pdf(self, sid, dpi=130):
+        if sid not in self._png_cache:
+            r = requests.get(self.pdf_url_sourceid(sid), timeout=30)
+            r.raise_for_status()
+            doc = fitz.open(stream=r.content, filetype='pdf')
+            self._png_cache[sid] = [doc.load_page(p).get_pixmap(dpi=dpi).tobytes('png')
+                            for p in range(doc.page_count)]
+            doc.close()
+        return self._png_cache[sid]
 
     def load_catalog(self, apply_cuts=True):
         # try:
@@ -82,7 +82,7 @@ class CosmosWebHandler(CatalogHandler):
 
         if apply_cuts:
             self.purity_cut()
-            self.miri_cut()
+            self.clean_miri_cut()
         else:
             print("Skipping purity/MIRI cuts (apply_cuts=False).")
             # print("Data loaded successfully.")
@@ -195,17 +195,32 @@ class CosmosWebHandler(CatalogHandler):
 
         return mask
     
+    def get_obj_position(self, filtername : str = "original", objectID : int = None):
+        if objectID is None:
+            raise ValueError("objectID must be provided.")
+        photom_catalog = self.get_photometry_catalog(filtername)
+        if photom_catalog is None:
+            raise ValueError(f"Photometry catalog for filter '{filtername}' is not loaded.")
+        id_col_name = self.get_id_col_name()
+        ra_col_name = self.get_ra_col_name()
+        dec_col_name = self.get_dec_col_name()
+        source_row = photom_catalog[photom_catalog[id_col_name] == objectID]
+        if len(source_row) == 0:
+            raise ValueError(f"Source ID {objectID} not found in photometry catalog for filter '{filtername}'.")
+        return source_row[ra_col_name][0], source_row[dec_col_name][0]
+        
     def get_cat_lephare(self, filtername : str = "original"):
-        return self.cat_lephare[filtername]
-    
+        return self.get_dict_filtername(self.cat_lephare, filtername)
+
     def get_cat_photom(self, filtername : str = "original"):
-        return self.cat_photom[filtername]
+        # return self.cat_photom[filtername]
+        return self.get_dict_filtername(self.cat_photom, filtername)
     
     def get_cat_cigale(self, filtername : str = "original"):
-        return self.cat_cigale[filtername]
+        return self.get_dict_filtername(self.cat_cigale, filtername)
     
     def get_cat_bd(self, filtername : str = "original"):
-        return self.cat_bd[filtername]
+        return self.get_dict_filtername(self.cat_bd, filtername)
     
     def get_cat_size(self, filtername : str = "original"):
         # returns in degrees so we can convert to arcseconds by multiplying by 3600
@@ -218,13 +233,13 @@ class CosmosWebHandler(CatalogHandler):
         return 'radius_sersic', 'radius_sersic_err'
         
     def get_photometry_catalog(self, filtername : str = "original"):
-        return self.cat_photom[filtername]
+        return self.get_dict_filtername(self.cat_photom, filtername)
     
     def get_photoz_catalog(self, filtername : str = "original"):
-        return self.cat_lephare[filtername]
+        return self.get_dict_filtername(self.cat_lephare, filtername)
     
     def get_z_redshift(self, filtername : str = "original"):
-        if self.cat_lephare[filtername] is not None and 'zfinal' in self.cat_lephare[filtername].colnames:
+        if self.get_photoz_catalog(filtername) is not None and 'zfinal' in self.get_photoz_catalog(filtername).colnames:
             return self.get_photoz_catalog(filtername)['zfinal']
         else:
             raise ValueError(f"Redshift column 'zfinal' not found in lephare catalog for filter '{filtername}'.")
@@ -246,6 +261,15 @@ class CosmosWebHandler(CatalogHandler):
         filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention(band, aperture)
         photom_catalog = self.get_photometry_catalog(filtername)
         return self._getcol(photom_catalog, filter_col_name)[:, aperture], self._getcol(photom_catalog, filter_err_col_name)[:, aperture]
+    
+    def get_filter_flux_of_id(self, source_id, filtername : str = "original", band : BandEnum = BandEnum.F444W, aperture : int = 2):
+        filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention(band, aperture)
+        photom_catalog = self.get_photometry_catalog(filtername)
+        id_col_name = self.get_id_col_name()
+        source_row = photom_catalog[photom_catalog[id_col_name] == source_id]
+        if len(source_row) == 0:
+            raise ValueError(f"Source ID {source_id} not found in photometry catalog for filter '{filtername}'.")
+        return source_row[filter_col_name][0][aperture], source_row[filter_err_col_name][0][aperture]
         
     def get_id_col_name(self):
         return 'id'
