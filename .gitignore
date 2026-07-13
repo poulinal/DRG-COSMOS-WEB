@@ -3,6 +3,7 @@ src/cigale-run/out
 src/*.html
 src/*.csv
 SED_fit/*.csv
+*.csv
 *.DS_Store
 *.fits
 *.dat

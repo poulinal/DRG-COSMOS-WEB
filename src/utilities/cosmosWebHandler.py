@@ -247,6 +247,9 @@ class CosmosWebHandler(CatalogHandler):
     def get_filter_catalog_name_convention(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
         return f"flux_aper_{str(band).lower()}", f"flux_err_aper_{str(band).lower()}"
     
+    def get_filter_catalog_name_convention_model(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
+        return f"flux_model_{str(band).lower()}", f"flux_err-cal_model_{str(band).lower()}"
+    
     def get_magnitude_catalog_name_convention(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
         return f"mag_aper_{str(band).lower()}", f"mag_err_aper_{str(band).lower()}"
     
@@ -262,14 +265,20 @@ class CosmosWebHandler(CatalogHandler):
         photom_catalog = self.get_photometry_catalog(filtername)
         return self._getcol(photom_catalog, filter_col_name)[:, aperture], self._getcol(photom_catalog, filter_err_col_name)[:, aperture]
     
-    def get_filter_flux_of_id(self, source_id, filtername : str = "original", band : BandEnum = BandEnum.F444W, aperture : int = 2):
-        filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention(band, aperture)
+    def get_filter_flux_of_id(self, source_id, filtername : str = "original", band : BandEnum = BandEnum.F444W, aperture : int = 2, useModel : bool = False):
+        if useModel:
+            filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention_model(band, aperture)
+        else:
+            filter_col_name, filter_err_col_name = self.get_filter_catalog_name_convention(band, aperture)
         photom_catalog = self.get_photometry_catalog(filtername)
         id_col_name = self.get_id_col_name()
         source_row = photom_catalog[photom_catalog[id_col_name] == source_id]
         if len(source_row) == 0:
             raise ValueError(f"Source ID {source_id} not found in photometry catalog for filter '{filtername}'.")
-        return source_row[filter_col_name][0][aperture], source_row[filter_err_col_name][0][aperture]
+        if useModel:
+            return source_row[filter_col_name][0], source_row[filter_err_col_name][0]
+        else:
+            return source_row[filter_col_name][0][aperture], source_row[filter_err_col_name][0][aperture]
         
     def get_id_col_name(self):
         return 'id'

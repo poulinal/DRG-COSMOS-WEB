@@ -21,6 +21,9 @@ BANDS = [
     ("alma.A3Band7",  "ALMA A3 continuum in Band 7",         345), 
     ("alma.A3Band8",  "ALMA A3 continuum in Band 8",         460),  
     ("alma.champs", "ALMA CHAMPS continuum",         230),   # <-- set CHAMPS freq
+    ("superdeblendedF24", "Super-deblended Spitzer/MIPS 24um", 12.5e3), # <-- set MIPS 24um freq
+    ("superdeblendedF100", "Super-deblended Herschel/PACS 100um", 3e3), # <-- set PACS 100um freq
+    ("superdeblendedF160", "Super-deblended Herschel/PACS 160um", 1.875e3), # <-- set PACS 160um freq
 ]
 
 FRAC_WIDTH = 0.02   # fractional bandwidth of the tophat (2% -> effectively monochromatic)
