@@ -313,11 +313,12 @@ class CosmosWebHandler(CatalogHandler):
                                     tables_to_keep=('lephare', 'photometry'))
         elif reduced == 'lighter':
             # now resave but  within photometry hotcold and se++, remove all columns except id, ra, dec, radius_sersic, radius_sersic_err, sersic, sersic_err, type, warn_flag, mag_model_f*, mag_err_model_f*, mag_aper_f*, mag_err_aper_f*, flux_model_f*, flux_err_model_f*, flux_aper_f*, and flux_err_aper_f* 
-            columns_to_keep = ['id', 'ra', 'dec', 'radius_sersic', 'radius_sersic_err', 'sersic', 'sersic_err', 'type', 'warn_flag', 'zfinal',
-                            'mag_model_f115w', 'mag_err_model_f115w', 'mag_aper_f115w', 'mag_err_aper_f115w', 'flux_model_f115w', 'flux_err_model_f115w', 'flux_aper_f115w', 'flux_err_aper_f115w',
-                            'mag_model_f150w', 'mag_err_model_f150w', 'mag_aper_f150w', 'mag_err_aper_f150w', 'flux_model_f150w', 'flux_err_model_f150w', 'flux_aper_f150w', 'flux_err_aper_f150w',
-                            'mag_model_f277w', 'mag_err_model_f277w', 'mag_aper_f277w', 'mag_err_aper_f277w', 'flux_model_f277w', 'flux_err_model_f277w', 'flux_aper_f277w', 'flux_err_aper_f277w',
-                            'mag_model_f444w', 'mag_err_model_f444w', 'mag_aper_f444w', 'mag_err_aper_f444w', 'flux_model_f444w', 'flux_err_model_f444w', 'flux_aper_f444w', 'flux_err_aper_f444w', 'mag_model_f770w', 'mag_err_model_f770w', 'mag_aper_f770w', 'mag_err_aper_f770w', 'flux_model_f770w', 'flux_err_model_f770w', 'flux_aper_f770w', 'flux_err_aper_f770w']
+            columns_to_keep = ['id', 'ra', 'dec', 'radius_sersic', 'radius_sersic_err', 'sersic', 'sersic_err', 'type', 'warn_flag', 'zfinal', 'tile',
+                            'mag_model_f115w', 'mag_err_model_f115w', 'mag_aper_f115w', 'mag_err_aper_f115w', 'flux_model_f115w', 'flux_err_model_f115w', 'flux_err-cal_model_f115w', 'flux_aper_f115w', 'flux_err_aper_f115w',
+                            'mag_model_f150w', 'mag_err_model_f150w', 'mag_aper_f150w', 'mag_err_aper_f150w', 'flux_model_f150w', 'flux_err_model_f150w', 'flux_err-cal_model_f150w', 'flux_aper_f150w', 'flux_err_aper_f150w',
+                            'mag_model_f277w', 'mag_err_model_f277w', 'mag_aper_f277w', 'mag_err_aper_f277w', 'flux_model_f277w', 'flux_err_model_f277w', 'flux_err-cal_model_f277w', 'flux_aper_f277w', 'flux_err_aper_f277w',
+                            'mag_model_f444w', 'mag_err_model_f444w', 'mag_aper_f444w', 'mag_err_aper_f444w', 'flux_model_f444w', 'flux_err_model_f444w', 'flux_err-cal_model_f444w', 'flux_aper_f444w', 'flux_err_aper_f444w', 
+                            'mag_model_f770w', 'mag_err_model_f770w', 'mag_aper_f770w', 'mag_err_aper_f770w', 'flux_model_f770w', 'flux_err_model_f770w', 'flux_err-cal_model_f770w', 'flux_aper_f770w', 'flux_err_aper_f770w']
             self.save_catalog_streamed(path,
                                     tables_to_keep=('photometry','lephare'),
                                     columns_to_keep=columns_to_keep)
@@ -357,6 +358,7 @@ class CosmosWebHandler(CatalogHandler):
           exist in a given table are read from disk, so unused columns (and the
           461-column B+D table, if dropped) never touch RAM.
         """
+        columns_kept = []
         unknown = set(tables_to_keep) - set(self._MASTER_HDU_INDEX)
         if unknown:
             raise ValueError(f"Unknown table(s) {unknown}. Valid: {sorted(self._MASTER_HDU_INDEX)}.")
@@ -371,6 +373,7 @@ class CosmosWebHandler(CatalogHandler):
                 if columns_to_keep is None and mask is None:
                     # Pure pass-through: astropy streams memmapped data to disk.
                     out.append(fits.BinTableHDU(data=src_hdu.data, name=name))
+                    columns_kept.extend(src_hdu.columns.names)
                 else:
                     cols = (columns_to_keep if columns_to_keep is not None
                             else src_hdu.columns.names)
@@ -384,9 +387,10 @@ class CosmosWebHandler(CatalogHandler):
                         new_cols.append(fits.Column(name=c, array=arr,
                                                     format=src_hdu.columns[c].format))
                     out.append(fits.BinTableHDU.from_columns(new_cols, name=name))
+                    columns_kept.extend(c.name for c in new_cols)
 
             out.writeto(path, overwrite=overwrite)
-        print(f"Catalog streamed to {path} (kept: {list(tables_to_keep)}).")
+        print(f"Catalog streamed to {path} (kept: {list(tables_to_keep)}), columns kept: {columns_kept}.")
         
         
         
