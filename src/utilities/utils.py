@@ -7,19 +7,32 @@ import matplotlib.patheffects as pe
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.wcs import WCS
+from astropy.io import fits
+from astropy.nddata import Cutout2D
 
 
-def include_scale_bar(fig, ax, wcs, x_min, x_max, y_min, y_max, scale_bar_length_arcsec=2, color='white', fontsize=8):
+def include_scale_bar(fig, ax, wcs, x_min, x_max, y_min, y_max, scale_bar_length_arcsec=2, color='white', fontsize=8, scalebar_outline_width=3):
     scale_bar_length_pixels = scale_bar_length_arcsec / wcs.proj_plane_pixel_scales()[0].to(u.arcsec).value
     crop_h, crop_w = (y_max - y_min), (x_max - x_min)
     margin = 0.05 * crop_h
     x0 = margin
     y0 = margin  # anchor near the bottom-left of the actual crop
-    outline = [pe.withStroke(linewidth=4, foreground='black')]
-    ax.plot([x0, x0 + scale_bar_length_pixels], [y0, y0], color=color, linewidth=2.5,
+    outline = [pe.withStroke(linewidth=scalebar_outline_width, foreground='black')]
+    
+    scalebar_linewidth = 2.0
+    ax.plot([x0, x0 + scale_bar_length_pixels], [y0, y0], color=color, linewidth=scalebar_linewidth,
             solid_capstyle='butt', path_effects=outline)
-    ax.text(x0, y0 + 0.02 * crop_h, f'{scale_bar_length_arcsec} arcsec', color=color,
-            fontsize=fontsize, va='bottom', path_effects=outline)
+    #include end ticks on the scale bar
+    ax.plot([x0, x0], [y0 - 0.01 * crop_h, y0 + 0.01 * crop_h], color=color, linewidth=scalebar_linewidth,
+            solid_capstyle='butt', path_effects=outline)
+    ax.plot([x0 + scale_bar_length_pixels, x0 + scale_bar_length_pixels], [y0 - 0.01 * crop_h, y0 + 0.01 * crop_h], color=color, linewidth=scalebar_linewidth,
+            solid_capstyle='butt', path_effects=outline)
+    
+    #make the text outline less thick than the scale bar outline
+    arcsecond_outline = [pe.withStroke(linewidth=scalebar_outline_width/2, foreground='black')]
+    ax.text(x0, y0 + 0.02 * crop_h, f'{scale_bar_length_arcsec}\"', color=color,
+            fontsize=fontsize, va='bottom', path_effects=arcsecond_outline)
     ax.axis('off')
 
 def include_interface_box(fig, ax, x_pixel, y_pixel, wcs, x_min, y_min, box_size_arcsec=5.75, color='dodgerblue'):
@@ -41,7 +54,7 @@ def include_marker_scaled(fig, ax, x_pixel, y_pixel, wcs, x_min, y_min, marker_s
     ax.scatter(x_pixel - x_min, y_pixel - y_min, s=sizeOfMarker, edgecolor=color, facecolor='none',
                 label=f'ID: {obj_id} Res @ {marker_size_arcsec}"')
 
-def include_ellipse_scaled(fig, ax, x_pixel, y_pixel, obj_id, wcs, x_min, y_min, a_arcsec=5.2, b_arcsec=3.0, pa_deg=30, color='red'):
+def include_ellipse_scaled(fig, ax, x_pixel, y_pixel, obj_id, wcs, x_min, y_min, a_arcsec=5.2, b_arcsec=3.0, pa_deg=30, color='red', alpha=0.8):
     # print(f"Including ellipse with a={a_arcsec}\" and b={b_arcsec}\" at PA={pa_deg} degrees for object ID: {obj_id}")
     pixscale_arcsec = wcs.proj_plane_pixel_scales()[0].to(u.arcsec).value
     a_pix = a_arcsec / pixscale_arcsec  # semi-major axis in image pixels
@@ -49,7 +62,7 @@ def include_ellipse_scaled(fig, ax, x_pixel, y_pixel, obj_id, wcs, x_min, y_min,
 
     ellipse = plt.matplotlib.patches.Ellipse((x_pixel - x_min, y_pixel - y_min), width=2*a_pix, height=2*b_pix,
                     angle=pa_deg, edgecolor=color, facecolor='none', linestyle='--',
-                    label=f'ID: {obj_id} Ellipse @ {a_arcsec:<.2f}"x{b_arcsec:<.2f}" PA={pa_deg:<.2f}°')
+                    label=f'ID: {obj_id} Ellipse @ {a_arcsec:<.2f}"x{b_arcsec:<.2f}" PA={pa_deg:<.2f}°', alpha=alpha)
     ax.add_patch(ellipse)
 
 def include_small_crosshair(fig, ax, x_pixel, y_pixel, x_min, y_min, size_pixels=1, color='red', alpha=0.8):
@@ -58,7 +71,7 @@ def include_small_crosshair(fig, ax, x_pixel, y_pixel, x_min, y_min, size_pixels
     ax.plot([x_pixel - x_min, x_pixel - x_min],
             [y_pixel - y_min - size_pixels, y_pixel - y_min + size_pixels], color=color, linewidth=1, alpha=alpha)
 
-def plot_panel(fig, ax, image, wcs, hdr, ra, dec, obj_id, title_prefix, zoom_size=None, resolution_arcsec=None, statistic_resolution_arcsec=None, cmap='inferno'):
+def plot_panel(fig, ax, image, wcs, hdr, ra, dec, obj_id, title_prefix, zoom_size=None, resolution_arcsec=None, statistic_resolution_arcsec=None, cmap='inferno', hide_title=False, include_interface_box=True):
     """Crop `image` around the object's own pixel position (from `idic`), display it, and annotate."""
     # if obj_id not in idic:
     if not check_point_is_in_image(image, wcs, ra, dec):
@@ -121,10 +134,20 @@ def plot_panel(fig, ax, image, wcs, hdr, ra, dec, obj_id, title_prefix, zoom_siz
     x_min, x_max = x_pixel - half, x_pixel + half
     y_min, y_max = y_pixel - half, y_pixel + half
 
-    crop = np.full((2 * half, 2 * half), np.nan, dtype=float)
-    sx0, sx1 = max(0, x_min), min(image.shape[1], x_max)
-    sy0, sy1 = max(0, y_min), min(image.shape[0], y_max)
-    crop[sy0 - y_min:sy1 - y_min, sx0 - x_min:sx1 - x_min] = image[sy0:sy1, sx0:sx1]
+    # crop = np.full((2 * half, 2 * half), np.nan, dtype=float)
+    # sx0, sx1 = max(0, x_min), min(image.shape[1], x_max)
+    # sy0, sy1 = max(0, y_min), min(image.shape[0], y_max)
+    # crop[sy0 - y_min:sy1 - y_min, sx0 - x_min:sx1 - x_min] = image[sy0:sy1, sx0:sx1]
+    #instead use Cutout2D to crop the image, which will handle the out-of-image area padding with NaN automatically
+    # data = hdul[0].data.astype(float)
+    # wcs = WCS(hdul[0].header).celestial
+    # center_pixel = (data.shape[1] / 2, data.shape[0] / 2)
+    # pixscale_arcsec = wcs.proj_plane_pixel_scales()[0].to(u.arcsec).value
+    # size_pix = int(jwst_cutout_size_arcsec / pixscale_arcsec)
+    # cutout = Cutout2D(data, position=center_pixel, size=(size_pix, size_pix), wcs=wcs)
+    # data = cutout.data
+    # wcs = cutout.wcs
+    crop = Cutout2D(image, position=(x_pixel, y_pixel), size=(2 * half, 2 * half), wcs=wcs).data
 
     # Guard against an all-NaN crop (object sits in a fully-blank/edge region):
     # np.nanpercentile on an all-NaN array raises, so fall back to a default scale.
@@ -134,7 +157,7 @@ def plot_panel(fig, ax, image, wcs, hdr, ra, dec, obj_id, title_prefix, zoom_siz
         vmin, vmax = np.nanpercentile(crop, 10), np.nanpercentile(crop, 99)
     ax.imshow(crop, origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
     # include_marker_scaled(fig, ax, x_pixel, y_pixel, wcs, x_min, y_min, marker_size_arcsec=circle_size_arcsec, color='red')
-    include_interface_box(fig, ax, x_pixel, y_pixel, wcs, x_min, y_min, box_size_arcsec=5.75, color='dodgerblue')
+    include_interface_box(fig, ax, x_pixel, y_pixel, wcs, x_min, y_min, box_size_arcsec=5.75, color='dodgerblue') if include_interface_box else None
     include_scale_bar(fig, ax, wcs, x_min, x_max, y_min, y_max, scale_bar_length_arcsec=2, color='white')
     include_small_crosshair(fig, ax, x_pixel, y_pixel, x_min, y_min, size_pixels=0.5, color='red', alpha=0.5)
     include_ellipse_scaled(fig, ax, x_pixel, y_pixel, obj_id, wcs, x_min, y_min, a_arcsec=beamsize_maj_arcsec, b_arcsec=beamsize_min_arcsec, pa_deg=beam_pa.to(u.deg).value, color='red')
@@ -143,7 +166,8 @@ def plot_panel(fig, ax, image, wcs, hdr, ra, dec, obj_id, title_prefix, zoom_siz
     stdev_value, rms_value = get_statistics_with_sigma_clipping(image, x_pixel, y_pixel, radius_arcsec=radius_for_statistics_arcsec, sigma_threshold=3, pixscale_arcsec=pixel_scales.to(u.arcsec).value)
     sigma3 = 3 * stdev_value
 
-    ax.set_title(f"{title_prefix}: {radius_for_peak_arcsec:<.2f}\" radius point: {intensity_point:.3g}, \n avg: {intensity_avg:.3g}, peak: {intensity_peak:.3g} \n {radius_for_statistics_arcsec:<.2f}\" radius stdev: {stdev_value:.3g}, \n RMS: {rms_value:.3g}, 3-sigma: {sigma3:.3g}")
+    if not hide_title:
+        ax.set_title(f"{title_prefix}: {radius_for_peak_arcsec:<.2f}\" radius point: {intensity_point:.3g}, \n avg: {intensity_avg:.3g}, peak: {intensity_peak:.3g} \n {radius_for_statistics_arcsec:<.2f}\" radius stdev: {stdev_value:.3g}, \n RMS: {rms_value:.3g}, 3-sigma: {sigma3:.3g}")
 
 #first measure the stdev and rms in a 5 arcsec radius box around the object, and then remove any f_pixels/noise that are above 3 sigma in that box, and then re-measure the stdev and rms with
 def get_statistics_with_sigma_clipping(image, x_pixel, y_pixel, sigma_threshold, radius_arcsec=None, pixscale_arcsec=None, wcs=None, hdr=None):

@@ -230,7 +230,8 @@ class CosmosWebHandler(CatalogHandler):
             raise ValueError(f"Size column 'radius_sersic' not found in photometry catalog for filter '{filtername}'.")
         
     def get_radius_col_name(self, filtername = "original"):
-        return 'radius_sersic', 'radius_sersic_err'
+        # return 'radius_sersic', 'radius_sersic_err'
+        return 0,1
         
     def get_photometry_catalog(self, filtername : str = "original"):
         return self.get_dict_filtername(self.cat_photom, filtername)
@@ -253,7 +254,9 @@ class CosmosWebHandler(CatalogHandler):
     def get_magnitude_catalog_name_convention(self, band : BandEnum = BandEnum.F444W, aperture : int = 2):
         return f"mag_aper_{str(band).lower()}", f"mag_err_aper_{str(band).lower()}"
     
-    
+    def get_size_catalog(self, filtername : str = "original"):
+        return self.get_cat_size(filtername)
+        
     def get_filter_magnitude(self, filtername: str = "original", band: BandEnum = BandEnum.F444W, aperture: int = 2):
         # return self._getcol(self.get_photometry_catalog(filtername), self.get_magnitude_catalog_name_convention(band, aperture))[:, aperture], None  # Catalog does not provide magnitude error for circular apertures, so we return None for the error.
         mag_col_name, mag_err_col_name = self.get_magnitude_catalog_name_convention(band, aperture)

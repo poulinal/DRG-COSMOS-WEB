@@ -134,6 +134,7 @@ class CatalogHandler(FitFileHandler):
             filtername (str, optional): _description_. Defaults to "original".
         """
         radius_col, radius_err_col = self.get_radius_col_name()
+        print(self.get_size_catalog(filtername))
         if radius_err_col is None:
             return self.get_size_catalog(filtername)[radius_col], None
         else:
